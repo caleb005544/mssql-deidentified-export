@@ -1,0 +1,12 @@
+DROP TABLE IF EXISTS stg.fact_sales_daily;
+
+CREATE TABLE stg.fact_sales_daily AS
+SELECT
+    f.date,
+    m.storeno_new AS storeno,   -- 轉成 surrogate key
+    f.revenue,
+    f.customer_count
+FROM mart.fact_sales_daily f
+JOIN stg.mapping_store_keys m
+    ON f.storeno = m.storeno_raw
+ORDER BY f.date, m.storeno_new;

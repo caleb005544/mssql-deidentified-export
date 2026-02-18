@@ -1,0 +1,42 @@
+DROP TABLE IF EXISTS stg.dim_sv;
+
+CREATE TABLE stg.dim_sv AS
+WITH name_list AS (
+    SELECT *
+    FROM (VALUES
+        (1, 'Alexander'),
+        (2, 'Eleanor'),
+        (3, 'Sebastian'),
+        (4, 'Catherine'),
+        (5, 'Theodore'),
+        (6, 'Finn'),
+        (7, 'Maya'),
+        (8, 'Leo'),
+        (9, 'Iris'),
+        (10, 'Kai'),
+        (11, 'Jasper'),
+        (12, 'Luna'),
+        (13, 'Silas'),
+        (14, 'Willow'),
+        (15, 'Rowan'),
+        (16, 'Felix'),
+        (17, 'Stella'),
+        (18, 'Xavier'),
+        (19, 'Aria'),
+        (20, 'Miles')
+    ) AS t(id, name)
+),
+base AS (
+    SELECT
+        m.storeno_new AS storeno,
+        -- 用 md5 轉成整數，然後 mod 20 + 1
+        (('x' || SUBSTRING(md5(m.storeno_new) FROM 1 FOR 8))::bit(32)::int % 20 + 1) AS name_id
+    FROM stg.mapping_store_keys m
+)
+SELECT
+    b.storeno,
+    n.name AS sv_name
+FROM base b
+JOIN name_list n
+    ON b.name_id = n.id
+ORDER BY b.storeno;
