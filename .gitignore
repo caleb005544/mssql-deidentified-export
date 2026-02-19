@@ -15,3 +15,7 @@ output/
 *.csv
 !brand_store_list.csv
 !sv_store_list.csv
+
+# log
+cron_log.log
+*.log
