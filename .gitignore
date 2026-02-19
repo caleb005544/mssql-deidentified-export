@@ -1,5 +1,17 @@
+# --- Security & Config ---
 .env
+docker-compose.yml
+report_dispatch_map.csv
+
+# --- Python & Environment ---
 .venv/
 __pycache__/
+*.py[cod]
+.DS_Store
+
+# --- Project Outputs ---
 output/
 *.xlsx
+*.csv
+!brand_store_list.csv
+!sv_store_list.csv

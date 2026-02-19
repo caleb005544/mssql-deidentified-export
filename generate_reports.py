@@ -1,5 +1,5 @@
 # generate_reports.py  (Report v1.1 Clean)
-# - Timeseries report: 日期(yyyymmdd 星期X中文) + 每店(日商/來客數/客單價)
+# - Timeseries report
 # - Uses openpyxl to write merged headers (Store group) and metric subheaders
 # - Thousand separators, rounded to integers
 # - Store scope comes from exported lists (output/*.csv) OR directly from semantic tables
@@ -16,10 +16,8 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from openpyxl import Workbook
 from openpyxl import Workbook
-# 核心美化元件
 from openpyxl.styles import Alignment, Font, Border, Side 
 from openpyxl.utils import get_column_letter
-# 將 DataFrame 轉為 Excel 內容的工具
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 
@@ -51,10 +49,10 @@ BRAND_LIST_CSV = os.getenv("BRAND_LIST_CSV", os.path.join(OUTPUT_DIR, "brand_sto
 SV_LIST_CSV = os.getenv("SV_LIST_CSV", os.path.join(OUTPUT_DIR, "sv_store_list.csv"))
 
 # Metric order
-METRIC_ORDER = ["日商", "來客數", "客單價"]
+METRIC_ORDER = ["revenue", "customer_count", "average_ticket"]
 
 def _clean_col(c):
-    # 把 ('Store 1002 ', '日商 ') 變成 ('Store 1002','日商')
+
     if isinstance(c, tuple) and len(c) == 2:
         a, b = c
         a = a.strip() if isinstance(a, str) else a
@@ -64,7 +62,7 @@ def _clean_col(c):
         return c.strip()
     return c
 
-# Weekday mapping (Python: Mon=0 ... Sun=6)
+# Weekday mapping Chinese display
 WEEKDAY_ZH = {
     0: "星期一",
     1: "星期二",
@@ -117,8 +115,7 @@ def month_date_range(ym: str) -> Tuple[dt.date, dt.date]:
     """
     year, month = map(int, ym.split("-"))
     start = dt.date(year, month, 1)
-    
-    # 1. 計算該月的理論月底
+
     if month == 12:
         next_start = dt.date(year + 1, 1, 1)
     else:
@@ -133,13 +130,7 @@ def month_date_range(ym: str) -> Tuple[dt.date, dt.date]:
 
 
 def load_scope_lists() -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Expect CSV columns (minimum):
-      brand_store_list.csv: brand, storeno, store_name
-      sv_store_list.csv:    sv_name, storeno, store_name, brand  (brand optional but nice)
 
-    If files do not exist, return empty DF and we will fallback to DB queries.
-    """
     brand_df = pd.DataFrame()
     sv_df = pd.DataFrame()
 
@@ -155,14 +146,7 @@ def load_scope_lists() -> Tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def get_store_scope(scope_type: str, scope_value: str) -> List[str]:
-    """
-    scope_type:
-      - "brand" => use BRAND_LIST_CSV or semantic.dim_store
-      - "sv"    => use SV_LIST_CSV or semantic.dim_sv + semantic.dim_store
-      - "storeno" => single store
 
-    Returns list of storeno (surrogate storeno like B1002, etc.)
-    """
     scope_type = scope_type.strip().lower()
     scope_value = scope_value.strip()
 
@@ -240,21 +224,16 @@ def chinese_date_label(d: pd.Timestamp) -> str:
 def write_timeseries_excel(pivot: pd.DataFrame, out_path: str) -> None:
     df = pivot.copy()
 
-    # --- 1) 整理欄位：確保日期在第一欄，其餘按 METRIC_ORDER 排序 ---
-    # 處理 MultiIndex 標頭清洗
     if isinstance(df.columns, pd.MultiIndex):
-        # 找出日期欄位在哪個位置
         temp_cols = [c[0] if c[1] == '' else c for c in df.columns]
         date_col_name = df.columns[temp_cols.index("日期")] if "日期" in temp_cols else df.columns[0]
         
-        # 取得所有店鋪
         stores = []
         for c in df.columns:
             if isinstance(c, tuple) and c[0] not in stores and c[0] != "日期":
                 stores.append(c[0])
         stores.sort()
 
-        # 重新建立欄位順序：日期 -> 店1(日商,來客,客單) -> 店2...
         new_ordered_cols = [date_col_name]
         for s in stores:
             for m in METRIC_ORDER:
@@ -266,11 +245,10 @@ def write_timeseries_excel(pivot: pd.DataFrame, out_path: str) -> None:
     # --- 2) 寫入 Excel ---
     wb = Workbook()
     ws = wb.active
-    ws.title = "時序列速報"
+    ws.title = "Time Series Sales Report"
 
-    # 準備雙層標頭
-    header_1 = [] # 店名層
-    header_2 = [] # 指標層
+    header_1 = [] 
+    header_2 = [] 
     for col in df.columns:
         if isinstance(col, tuple):
             header_1.append(col[0])
@@ -282,49 +260,41 @@ def write_timeseries_excel(pivot: pd.DataFrame, out_path: str) -> None:
     ws.append(header_1)
     ws.append(header_2)
 
-    # 寫入數值資料
     for row_data in df.values:
         ws.append([None if pd.isna(v) else v for v in row_data])
 
-    # --- 3) 格式化與合併儲存格 ---
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                          top=Side(style='thin'), bottom=Side(style='thin'))
 
-    # A. 合併店名儲存格 (從 B 欄開始，每 3 欄合併一次)
-    # 我們從第 2 欄 (B) 到最後一欄，步進值為 len(METRIC_ORDER)
     num_metrics = len(METRIC_ORDER)
     max_col = ws.max_column
     
-    # 日期欄位合併 (A1:A2)
     ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
     ws.cell(1, 1).alignment = Alignment(horizontal="center", vertical="center")
 
     for col_idx in range(2, max_col + 1, num_metrics):
-        # 合併第一列的店名 (例如 B1:D1)
+
         end_col = min(col_idx + num_metrics - 1, max_col)
         ws.merge_cells(start_row=1, start_column=col_idx, end_row=1, end_column=end_col)
         
-        # 設定店名置中與字體
+
         cell = ws.cell(row=1, column=col_idx)
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.font = Font(bold=True)
 
-    # B. 設定指標列 (第二列) 置中與粗體
+
     for col_idx in range(1, max_col + 1):
         cell = ws.cell(row=2, column=col_idx)
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
         cell.border = thin_border
 
-    # C. 數字加上千分位逗號 & 四捨五入格式
-    # 資料從第三列開始
     for row in ws.iter_rows(min_row=3, max_row=ws.max_row, min_col=2, max_col=max_col):
         for cell in row:
             if isinstance(cell.value, (int, float)):
-                cell.number_format = '#,##0'  # 千分位整數
+                cell.number_format = '#,##0'  
             cell.alignment = Alignment(horizontal="right")
 
-    # D. 自動調整欄寬 (簡單版)
     for col in ws.columns:
         ws.column_dimensions[get_column_letter(col[0].column)].width = 12
 
@@ -342,18 +312,10 @@ def generate_timeseries_report(scope_type: str, scope_value: str, year_month: Op
         print(f"[WARN] No stores found for {scope_type}={scope_value}")
         return None
 
-    # --- SQL 強化：以 dim_date 為主體進行 LEFT JOIN ---
-    # 這樣可以確保：
-    # 1. 即使某天沒業績，日期也會出現 (符合 A6)
-    # 2. 星期名稱直接拿 DB 的 yyyymmdd + weekday_name_zh (符合 A2, M1)
-# --- SQL 修正版 ---
-# --- SQL 修正版：強制產生中文星期 ---
     sql = text(f"""
         WITH date_spine AS (
             SELECT 
                 date,
-                -- 1. 使用 to_char 產生 YYYYMMDD
-                -- 2. 使用 CASE 確保不論 DB 內容為何，產出都是中文星期
                 to_char(date, 'YYYYMMDD') || ' ' || (
                     CASE extract(dow from date)
                         WHEN 0 THEN '星期日'
@@ -394,50 +356,39 @@ def generate_timeseries_report(scope_type: str, scope_value: str, year_month: Op
 
     if df["storeno"].isnull().all():
         print(f"[WARN] No data available for {scope_type}={scope_value} in {ym}")
-        # 即使沒數據，我們通常還是會產出一張只有日期、數值全空的報表，或是依你需求 return None
+
         return None
 
-    # --- 資料清洗與計算 ---
-    # 1. 補齊 store_name (避免 Left Join 產生的 storeno 為空)
     name_map = fetch_store_name_map(stores)
     df["store_name"] = df["storeno"].map(name_map).fillna(df["storeno"])
     
-    # 2. 計算客單價 (直接在 Pandas 算，確保 NaN 處理一致)
     df["revenue"] = pd.to_numeric(df["revenue"]).fillna(0)
     df["customer_count"] = pd.to_numeric(df["customer_count"]).fillna(0)
-    
-    # 客單價：避免除以 0
+
     df["average_ticket"] = np.where(
         df["customer_count"] > 0, 
         (df["revenue"] / df["customer_count"]).round(0), 
         0
     )
 
-    # --- Pivot 邏輯 ---
-    # 我們改用 full_date_label 做 index，它已經是 "20251201 星期一" 的格式了
     pivot = df.pivot_table(
         index=["date", "full_date_label"],
         columns="store_name",
         values=["revenue", "customer_count", "average_ticket"]
     )
 
-    # 重新命名與排序層級 (指標層級轉中文)
     metric_map = {"revenue": "日商", "customer_count": "來客數", "average_ticket": "客單價"}
     pivot = pivot.rename(columns=metric_map)
     
-    # 讓 StoreName 在第一層，Metric 在第二層
     pivot = pivot.reorder_levels([1, 0], axis=1).sort_index(axis=1)
 
-    # 確保日期順序，並將 full_date_label 轉為一般欄位 '日期'
     pivot = pivot.sort_index(level="date").reset_index()
     pivot = pivot.rename(columns={"full_date_label": "日期"})
     
-    # 移除原始 date 欄位 (現在它在 Column MultiIndex 的 ('date', '') 位置)
     pivot = pivot.drop(columns=[('date', '')] if isinstance(pivot.columns, pd.MultiIndex) else ['date'])
 
-    # --- 輸出 Excel ---
     scope_safe = safe_filename(scope_value)
-    out_name = f"時序列速報_{scope_type}_{scope_safe}_{ym}.xlsx"
+    out_name = f"Time Series Sales Report_{scope_type}_{scope_safe}_{ym}.xlsx"
     out_path = os.path.join(OUTPUT_DIR, out_name)
 
     write_timeseries_excel(pivot, out_path)
