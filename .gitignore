@@ -7,6 +7,7 @@ report_dispatch_map.csv
 .venv/
 __pycache__/
 *.py[cod]
+*.pyc
 .DS_Store
 
 # --- Project Outputs ---
