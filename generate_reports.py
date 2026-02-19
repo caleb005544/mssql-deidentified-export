@@ -50,6 +50,12 @@ SV_LIST_CSV = os.getenv("SV_LIST_CSV", os.path.join(OUTPUT_DIR, "sv_store_list.c
 
 # Metric order
 METRIC_ORDER = ["revenue", "customer_count", "average_ticket"]
+METRIC_LABELS = {
+    "revenue": "日商",
+    "customer_count": "來客數",
+    "average_ticket": "客單價",
+}
+METRIC_ORDER_DISPLAY = [METRIC_LABELS[m] for m in METRIC_ORDER]
 
 def _clean_col(c):
 
@@ -235,10 +241,12 @@ def write_timeseries_excel(pivot: pd.DataFrame, out_path: str) -> None:
         stores.sort()
 
         new_ordered_cols = [date_col_name]
-        for s in stores:
-            for m in METRIC_ORDER:
-                if (s, m) in df.columns:
-                    new_ordered_cols.append((s, m))
+        if stores:
+            metric_order = METRIC_ORDER if any((stores[0], m) in df.columns for m in METRIC_ORDER) else METRIC_ORDER_DISPLAY
+            for s in stores:
+                for m in metric_order:
+                    if (s, m) in df.columns:
+                        new_ordered_cols.append((s, m))
         
         df = df[new_ordered_cols]
 
@@ -377,8 +385,7 @@ def generate_timeseries_report(scope_type: str, scope_value: str, year_month: Op
         values=["revenue", "customer_count", "average_ticket"]
     )
 
-    metric_map = {"revenue": "日商", "customer_count": "來客數", "average_ticket": "客單價"}
-    pivot = pivot.rename(columns=metric_map)
+    pivot = pivot.rename(columns=METRIC_LABELS)
     
     pivot = pivot.reorder_levels([1, 0], axis=1).sort_index(axis=1)
 
